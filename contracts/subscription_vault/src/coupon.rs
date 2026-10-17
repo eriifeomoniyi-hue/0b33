@@ -410,6 +410,7 @@ pub fn apply_discount_at_charge(
 #[cfg(test)]
 mod coupon_fee_ordering_tests {
     use super::*;
+    use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env, Symbol};
 
     /// The discount must be computed on the **gross** amount, not the

@@ -106,7 +106,7 @@
 //! | Entrypoint | Delegate |
 //! |---|---|
 //! | `get_subscriptions_by_merchant` | [`crate::queries::get_subscriptions_by_merchant`] |
-//! | `get_subscriptions_by_merchant_paginated` | [`crate::queries::get_subscriptions_by_merchant_paginated`] |
+//! | `list_subscriptions_by_merchant` | [`crate::queries::get_subscriptions_by_merchant_paginated`] |
 //! | `get_merchant_subscription_count` | [`crate::queries::get_merchant_subscription_count`] |
 //! | `get_merchant_max_subs` | [`crate::queries::get_merchant_max_subs`] |
 //! | `set_merchant_max_subs` | [`crate::subscription::do_set_merchant_max_subs`] |

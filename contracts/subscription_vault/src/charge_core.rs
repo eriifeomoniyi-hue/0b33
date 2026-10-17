@@ -653,7 +653,7 @@ pub fn charge_one(
                     &sub.merchant,
                     &sub.token,
                     fee_amount,
-                    price_cache.as_deref_mut(),
+                    None,
                 ))
             } else {
                 None

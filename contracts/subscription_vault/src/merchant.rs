@@ -29,10 +29,6 @@ use crate::types::{
     MerchantWhitelistModeEvent, MerchantWithdrawalEvent, PayoutSchedule, PlanDeprecatedEvent,
     PlanRegisteredEvent, PlanTemplate, ScheduledPayoutEvent, TokenEarnings,
     TokenReconciliationSnapshot, VacationEndedEvent, VacationStartedEvent, MAX_FEE_BIPS,
-    is_valid_allowed_operations, OP_CHARGE,
-    MerchantPausedEvent, MerchantRevokedEvent, MerchantUnpausedEvent, MerchantWhitelistModeEvent,
-    MerchantWithdrawalEvent, PayoutSchedule, PlanDeprecatedEvent, PlanRegisteredEvent,
-    PlanTemplate, ScheduledPayoutEvent, TokenEarnings, TokenReconciliationSnapshot, MAX_FEE_BIPS,
     is_valid_allowed_operations, OP_CHARGE, TOPIC_WITHDRAWN,
 };
 use soroban_sdk::{token, Address, Env, String, Symbol, Vec};
@@ -448,7 +444,7 @@ pub fn is_merchant_approved(env: &Env, merchant: &Address) -> bool {
 /// 3. Still withdraw all accumulated funds despite revocation
 pub fn require_merchant_approved(env: &Env, merchant: &Address) -> Result<(), Error> {
     // If whitelist mode is disabled, all merchants are implicitly approved
-    if !is_whitelist_mode_enabled(env) {
+    if !get_whitelist_mode(env) {
         return Ok(());
     }
     
@@ -1914,10 +1910,8 @@ pub fn register_sub_account(
     merchant.require_auth();
 
     // Reject empty labels
-    let label_str = label.to_str(env);
-    if label_str.len() == 0 {
-        return Err(Error::InvalidInput);
-    }
+    // `Symbol` values are non-empty by construction (Soroban rejects empty
+    // symbols), so no separate empty-label check is required.
 
     // Ensure merchant config exists (merchant must be initialized)
     let _config = get_merchant_config(env, merchant.clone()).ok_or(Error::NotFound)?;

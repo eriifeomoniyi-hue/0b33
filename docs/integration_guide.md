@@ -168,7 +168,8 @@ Codes](#error-codes-failure-modes--retry-behavior)).
 | `get_subscription` | `(subscription_id) -> Subscription` | None | Returns full `Subscription` struct. |
 | `get_subscription_count` | `() -> u32` | None | Total ever created. |
 | `get_merchant_subscription_count` | `(merchant) -> u32` | None | |
-| `get_subscriptions_by_merchant` | `(merchant, start, limit) -> Vec<Subscription>` | None | Offset pagination. |
+| `get_subscriptions_by_merchant` | `(merchant, start, limit, reverse) -> Vec<Subscription>` | None | Offset pagination. `reverse = true` returns newest-first. |
+| `list_subscriptions_by_merchant` | `(merchant, cursor, limit, reverse) -> SubscriptionsMerchantPage` | None | Cursor pagination with the same `reverse` ordering. |
 | `get_subscriptions_by_token` | `(token, start, limit) -> Vec<Subscription>` | None | Offset pagination. |
 | `list_subscriptions_by_subscriber` | `(subscriber, start_from_id, limit) -> SubscriptionsPage` | None | Cursor-style pagination by subscriber. |
 | `estimate_topup_for_intervals` | `(subscription_id, num_intervals) -> i128` | None | Calculates how much the subscriber needs to deposit to cover the next N intervals. |

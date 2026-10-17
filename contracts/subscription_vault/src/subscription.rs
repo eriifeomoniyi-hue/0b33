@@ -66,15 +66,17 @@ use crate::safe_math::{safe_add, safe_add_balance, safe_sub, safe_sub_balance};
 use crate::state_machine::transition_to;
 use crate::statements::append_statement;
 use crate::types::{
-    BillingChargeKind, CancellationEscrow, CancellationEscrowReleasedEvent, DataKey, EmergencyWithdrawIntent, Error, FundsDepositedEvent,
-    GlobalCapDefaultUpdatedEvent, LifetimeCapReachedEvent, LifetimeCapUpdatedEvent,
-    MerchantCapDefaultUpdatedEvent, PartialRefundEvent, PlanMaxActiveUpdatedEvent, PlanTemplate,
-    PlanTemplateUpdatedEvent, SubscriberEmergencyWithdrawEvent, SubscriberWithdrawalEvent,
-    Subscription, SubscriptionCancelScheduledEvent, SubscriptionCancelUnscheduledEvent,
-    SubscriptionCancelledEvent, SubscriptionCreatedEvent, SubscriptionMigratedEvent,
-    SubscriptionRecoveryReadyEvent, SubscriptionStatus, UsageLimits, UsageLimitsConfiguredEvent,
-    TOPIC_CAP_REACH, TOPIC_CHARGED, TOPIC_CREATED, TOPIC_DEPOSITED, TOPIC_ONE_OFF_CHARGED,
-    BATCH_MAX_SIZE, SUB_TTL_EXTEND_TO, SUB_TTL_THRESHOLD,
+    BillingChargeKind, CancellationEscrow, CancellationEscrowOpenedEvent,
+    CancellationEscrowReleasedEvent, DataKey, EmergencyWithdrawIntent, Error,
+    FundsDepositedEvent, GlobalCapDefaultUpdatedEvent, GraceBuyoutEvent, LifetimeCapReachedEvent,
+    LifetimeCapUpdatedEvent, MerchantCapDefaultUpdatedEvent, PartialRefundEvent,
+    PlanMaxActiveUpdatedEvent, PlanTemplate, PlanTemplateUpdatedEvent, RateLimitTrippedEvent,
+    ReferralAttributedEvent, SubscriberCreateWindow, SubscriberEmergencyWithdrawEvent,
+    SubscriberWithdrawalEvent, Subscription, SubscriptionCancelScheduledEvent,
+    SubscriptionCancelUnscheduledEvent, SubscriptionCancelledEvent, SubscriptionCreatedEvent,
+    SubscriptionMigratedEvent, SubscriptionRecoveryReadyEvent, SubscriptionStatus, UsageLimits,
+    UsageLimitsConfiguredEvent, TOPIC_CAP_REACH, TOPIC_CHARGED, TOPIC_CREATED, TOPIC_DEPOSITED,
+    TOPIC_ONE_OFF_CHARGED, BATCH_MAX_SIZE, SUB_TTL_EXTEND_TO, SUB_TTL_THRESHOLD,
     CANCELLATION_ESCROW_WINDOW_SECS,
 };
 use soroban_sdk::{Address, Env, Symbol, Vec};
@@ -2102,7 +2104,7 @@ fn bulk_deposit_one(
 
     let now = env.ledger().timestamp();
     // Expiration guard
-    if sub.is_expired(now) {
+    if sub.is_expired(now, env.ledger().sequence()) {
         return crate::types::BulkDepositResult {
             subscription_id,
             success: false,
@@ -2950,7 +2952,7 @@ pub fn do_deposit_funds_on_behalf(
     }
 
     // Expiration guard
-    if sub.is_expired(now) {
+    if sub.is_expired(now, env.ledger().sequence()) {
         if sub.status != SubscriptionStatus::Expired {
             transition_to(&mut sub.status, SubscriptionStatus::Expired)?;
             write_subscription(env, subscription_id, &sub);
@@ -3127,13 +3129,13 @@ fn resolve_cap(env: &Env, merchant: &Address, explicit_cap: Option<i128>) -> Opt
     get_global_cap_default(env)
 }
 
-fn lifetime_cap_reached(cap: i128, lifetime_charged: i128) -> bool {
+pub(crate) fn lifetime_cap_reached(cap: i128, lifetime_charged: i128) -> bool {
     let cap_i128: i128 = cap as i128;
     let charged_i128: i128 = lifetime_charged as i128;
     charged_i128 >= cap_i128
 }
 
-fn lifetime_cap_remaining(cap: i128, lifetime_charged: i128) -> i128 {
+pub(crate) fn lifetime_cap_remaining(cap: i128, lifetime_charged: i128) -> i128 {
     let cap_i128: i128 = cap as i128;
     let charged_i128: i128 = lifetime_charged as i128;
     cap_i128.saturating_sub(charged_i128).max(0)
@@ -3290,6 +3292,7 @@ pub fn do_create_plan_template(
         amount,
         interval_seconds,
         trial_seconds: 0,
+        trial_period_seconds: None,
         usage_enabled,
         lifetime_cap,
         template_key: plan_id,
@@ -3345,6 +3348,7 @@ pub fn do_create_plan_template_with_token(
         amount,
         interval_seconds,
         trial_seconds: 0,
+        trial_period_seconds: None,
         usage_enabled,
         lifetime_cap,
         template_key: plan_id,
@@ -3501,6 +3505,7 @@ pub fn do_create_subscription_from_plan(
             interval_seconds: plan.interval_seconds,
             lifetime_cap: plan.lifetime_cap,
             expires_at: None,
+            expires_at_ledger: None,
             timestamp: env.ledger().timestamp(),
             schema_version: crate::types::EVENT_SCHEMA_VERSION,
         },
@@ -3880,7 +3885,7 @@ pub fn do_initiate_transfer(
 ) -> Result<(), Error> {
     from.require_auth();
 
-    let sub = get_subscription(env, subscription_id)?;
+    let mut sub = get_subscription(env, subscription_id)?;
     if sub.subscriber != from {
         return Err(Error::Unauthorized);
     }

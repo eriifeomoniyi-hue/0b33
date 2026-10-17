@@ -316,7 +316,7 @@ fn test_merchant_query_basic() {
         create_sub_for_merchant_and_token(&client, &subscriber, &merchant, &token);
     }
 
-    let page = client.get_subscriptions_by_merchant(&merchant, &0, &100);
+    let page = client.get_subscriptions_by_merchant(&merchant, &0, &100, &false);
     assert_eq!(page.len(), 10);
     assert_eq!(client.get_merchant_subscription_count(&merchant), 10);
 }
@@ -331,10 +331,10 @@ fn test_merchant_query_pagination() {
         create_sub_for_merchant_and_token(&client, &subscriber, &merchant, &token);
     }
 
-    let page1 = client.get_subscriptions_by_merchant(&merchant, &0, &10);
+    let page1 = client.get_subscriptions_by_merchant(&merchant, &0, &10, &false);
     assert_eq!(page1.len(), 10);
 
-    let page2 = client.get_subscriptions_by_merchant(&merchant, &10, &10);
+    let page2 = client.get_subscriptions_by_merchant(&merchant, &10, &10, &false);
     assert_eq!(page2.len(), 5);
 }
 
@@ -342,14 +342,14 @@ fn test_merchant_query_pagination() {
 #[should_panic(expected = "Error(Contract, #3001)")] // InvalidInput = 3001
 fn test_merchant_query_limit_zero() {
     let (env, client, _token, _) = setup();
-    client.get_subscriptions_by_merchant(&Address::generate(&env), &0, &0);
+    client.get_subscriptions_by_merchant(&Address::generate(&env), &0, &0, &false);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #3001)")] // InvalidInput = 3001
 fn test_merchant_query_limit_overflow() {
     let (env, client, _token, _) = setup();
-    client.get_subscriptions_by_merchant(&Address::generate(&env), &0, &(MAX_SUBSCRIPTION_LIST_PAGE + 1));
+    client.get_subscriptions_by_merchant(&Address::generate(&env), &0, &(MAX_SUBSCRIPTION_LIST_PAGE + 1), &false);
 }
 
 #[test]
@@ -360,7 +360,7 @@ fn test_merchant_query_start_past_end() {
 
     create_sub_for_merchant_and_token(&client, &subscriber, &merchant, &token);
     
-    let page = client.get_subscriptions_by_merchant(&merchant, &2, &10);
+    let page = client.get_subscriptions_by_merchant(&merchant, &2, &10, &false);
     assert_eq!(page.len(), 0);
 }
 
@@ -548,12 +548,12 @@ mod benchmark {
         env.budget().set_ledger_read_budget(2_000);
         env.budget().set_ledger_write_budget(0);
 
-        let _ = client.get_subscriptions_by_merchant(&merchant, &0, &100);
+        let _ = client.get_subscriptions_by_merchant(&merchant, &0, &100, &false);
 
         let cpu = env.budget().cpu_instruction_count();
         let reads = env.budget().ledger_read_count();
         println!(
-            "[BENCH] get_subscriptions_by_merchant (1000 total, page 100): cpu={}, reads={}",
+            "[BENCH] get_subscriptions_by_merchant(1000 total, page 100, &false): cpu={}, reads={}",
             cpu, reads
         );
     }
@@ -723,9 +723,9 @@ fn test_merchant_query_within_budget() {
         &env,
         perf_budgets::MERCHANT_QUERY_CPU,
         perf_budgets::MERCHANT_QUERY_LEDGER_READS,
-        "get_subscriptions_by_merchant (100 subs)",
+        "get_subscriptions_by_merchant(100 subs, &false)",
         || {
-            let _page = client.get_subscriptions_by_merchant(&merchant, &0, &100);
+            let _page = client.get_subscriptions_by_merchant(&merchant, &0, &100, &false);
         },
     );
 }
@@ -742,7 +742,7 @@ fn test_merchant_query_budget_too_tight() {
     env.budget().set_ledger_read_budget(1);
     env.budget().set_ledger_write_budget(0);
 
-    let _ = client.get_subscriptions_by_merchant(&merchant, &0, &1);
+    let _ = client.get_subscriptions_by_merchant(&merchant, &0, &1, &false);
 }
 
 #[test]
@@ -809,7 +809,7 @@ fn test_merchant_index_bloat_within_budget() {
         perf_budgets::MERCHANT_QUERY_LEDGER_READS,
         "merchant_query_page_of_100",
         || {
-            let page = client.get_subscriptions_by_merchant(&merchant, &0, &100);
+            let page = client.get_subscriptions_by_merchant(&merchant, &0, &100, &false);
             assert_eq!(page.len(), 100);
         },
     );

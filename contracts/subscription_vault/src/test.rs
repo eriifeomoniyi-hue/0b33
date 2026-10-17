@@ -4433,7 +4433,7 @@ fn test_get_subscriptions_by_merchant_pagination_and_invalid_limit() {
     assert_eq!(
         test_env
             .client
-            .try_get_subscriptions_by_merchant(&merchant, &0, &0u32),
+            .try_get_subscriptions_by_merchant(&merchant, &0, &0u32, &false),
         Err(Ok(Error::InvalidInput))
     );
     assert_eq!(
@@ -4441,20 +4441,20 @@ fn test_get_subscriptions_by_merchant_pagination_and_invalid_limit() {
             &merchant,
             &0,
             &(MAX_SUBSCRIPTION_LIST_PAGE + 1)
-        ),
+        , &false),
         Err(Ok(Error::InvalidInput))
     );
     let p1 = test_env
         .client
-        .get_subscriptions_by_merchant(&merchant, &0, &2);
+        .get_subscriptions_by_merchant(&merchant, &0, &2, &false);
     assert_eq!(p1.len(), 2);
     let p2 = test_env
         .client
-        .get_subscriptions_by_merchant(&merchant, &2, &2);
+        .get_subscriptions_by_merchant(&merchant, &2, &2, &false);
     assert_eq!(p2.len(), 1);
     let p3 = test_env
         .client
-        .get_subscriptions_by_merchant(&merchant, &3, &10);
+        .get_subscriptions_by_merchant(&merchant, &3, &10, &false);
     assert_eq!(p3.len(), 0);
 }
 
@@ -4482,7 +4482,7 @@ fn test_get_subscriptions_by_merchant_paginated_cursor_based() {
     assert_eq!(
         test_env
             .client
-            .try_get_subscriptions_by_merchant_paginated(&merchant, &None::<u32>, &0u32),
+            .try_list_subscriptions_by_merchant(&merchant, &None::<u32>, &0u32, &false),
         Err(Ok(Error::InvalidInput))
     );
     
@@ -4490,18 +4490,18 @@ fn test_get_subscriptions_by_merchant_paginated_cursor_based() {
     assert_eq!(
         test_env
             .client
-            .try_get_subscriptions_by_merchant_paginated(
+            .try_list_subscriptions_by_merchant(
                 &merchant,
                 &None::<u32>,
                 &(MAX_SUBSCRIPTION_LIST_PAGE + 1)
-            ),
+            , &false),
         Err(Ok(Error::InvalidInput))
     );
     
     // Test first page with limit 2
     let page1 = test_env
         .client
-        .get_subscriptions_by_merchant_paginated(&merchant, &None::<u32>, &2u32);
+        .list_subscriptions_by_merchant(&merchant, &None::<u32>, &2u32, &false);
     assert_eq!(page1.subscriptions.len(), 2);
     assert_eq!(page1.total, 5);
     assert_eq!(page1.next_cursor, Some(2u32));
@@ -4509,7 +4509,7 @@ fn test_get_subscriptions_by_merchant_paginated_cursor_based() {
     // Test second page using cursor from first page
     let page2 = test_env
         .client
-        .get_subscriptions_by_merchant_paginated(&merchant, &page1.next_cursor, &2u32);
+        .list_subscriptions_by_merchant(&merchant, &page1.next_cursor, &2u32, &false);
     assert_eq!(page2.subscriptions.len(), 2);
     assert_eq!(page2.total, 5);
     assert_eq!(page2.next_cursor, Some(4u32));
@@ -4517,7 +4517,7 @@ fn test_get_subscriptions_by_merchant_paginated_cursor_based() {
     // Test final page
     let page3 = test_env
         .client
-        .get_subscriptions_by_merchant_paginated(&merchant, &page2.next_cursor, &2u32);
+        .list_subscriptions_by_merchant(&merchant, &page2.next_cursor, &2u32, &false);
     assert_eq!(page3.subscriptions.len(), 1);
     assert_eq!(page3.total, 5);
     assert_eq!(page3.next_cursor, None);
@@ -4525,7 +4525,7 @@ fn test_get_subscriptions_by_merchant_paginated_cursor_based() {
     // Test cursor beyond the list
     let page_empty = test_env
         .client
-        .get_subscriptions_by_merchant_paginated(&merchant, &Some(5u32), &2u32);
+        .list_subscriptions_by_merchant(&merchant, &Some(5u32), &2u32, &false);
     assert_eq!(page_empty.subscriptions.len(), 0);
     assert_eq!(page_empty.total, 5);
     assert_eq!(page_empty.next_cursor, None);
@@ -4533,7 +4533,7 @@ fn test_get_subscriptions_by_merchant_paginated_cursor_based() {
     // Test cursor at exact boundary
     let page_exact = test_env
         .client
-        .get_subscriptions_by_merchant_paginated(&merchant, &Some(4u32), &2u32);
+        .list_subscriptions_by_merchant(&merchant, &Some(4u32), &2u32, &false);
     assert_eq!(page_exact.subscriptions.len(), 1);
     assert_eq!(page_exact.total, 5);
     assert_eq!(page_exact.next_cursor, None);
@@ -4541,7 +4541,7 @@ fn test_get_subscriptions_by_merchant_paginated_cursor_based() {
     // Test large limit (returns all)
     let page_all = test_env
         .client
-        .get_subscriptions_by_merchant_paginated(&merchant, &None::<u32>, &100u32);
+        .list_subscriptions_by_merchant(&merchant, &None::<u32>, &100u32, &false);
     assert_eq!(page_all.subscriptions.len(), 5);
     assert_eq!(page_all.total, 5);
     assert_eq!(page_all.next_cursor, None);

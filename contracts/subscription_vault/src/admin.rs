@@ -8,12 +8,9 @@ use crate::types::{
     AcceptedToken, AdminConfigChangedEvent, AdminProposal, AdminProposalCancelledEvent,
     AdminProposalClaimedEvent, AdminProposalCreatedEvent, AdminRotatedEvent, BatchChargeResult,
     DataKey, Error, FeeTokenConfiguredEvent, PendingTreasuryChange, RecoveryEvent,
-    RecoveryInitiatorRole, RecoveryReason,
-    SchemaMigrationSummary, TreasuryChangeExecutedEvent, TreasuryChangeQueuedEvent, BATCH_MAX_SIZE,
+    RecoveryInitiatorRole, RecoveryReason, SchemaMigrationSummary, Subscription,
+    TreasuryChangeExecutedEvent, TreasuryChangeQueuedEvent, BATCH_MAX_SIZE, MAX_PROTOCOL_FEE_BIPS,
     TOPIC_RECOVERY, SUB_TTL_EXTEND_TO, SUB_TTL_THRESHOLD,
-    Subscription,
-    TreasuryChangeExecutedEvent, TreasuryChangeQueuedEvent, BATCH_MAX_SIZE, TOPIC_RECOVERY, SUB_TTL_EXTEND_TO,
-    SUB_TTL_THRESHOLD,
 };
 use crate::{
     charge_core::{charge_one, charge_usage_one},
@@ -96,7 +93,7 @@ pub const CONFIG_COOLDOWN_SECS: u64 = 6 * 60 * 60;
 /// collision-free `BytesN<32>` used as the persistent-storage key for the
 /// per-config-key cooldown timestamp.
 fn hash_key_label(env: &Env, key_label: &str) -> soroban_sdk::BytesN<32> {
-    let label_bytes = Bytes::from_array(env, key_label.as_bytes());
+    let label_bytes = Bytes::from_slice(env, key_label.as_bytes());
     env.crypto().sha256(&label_bytes).into()
 }
 
@@ -1181,7 +1178,7 @@ fn count_legacy_config_keys(env: &Env) -> u32 {
         DataKey::Operator,
         DataKey::SchemaVersion,
     ];
-    keys.iter().filter(|key| instance.has(key)).count() as u32
+    keys.iter().filter(|key| instance.has(*key)).count() as u32
 }
 
 fn count_rewriteable_subscriptions(env: &Env) -> u32 {
@@ -1225,12 +1222,12 @@ fn plan_schema_migration(
         } else {
             0
         },
-        subscriptions_for_ledger_expiration: if needs_ledger_expiration_rewrite {
+        subs_for_ledger_expiry: if needs_ledger_expiration_rewrite {
             subscription_count
         } else {
             0
         },
-        subscriptions_for_sub_account_label: if needs_sub_account_label_rewrite {
+        subs_for_sub_account_label: if needs_sub_account_label_rewrite {
             subscription_count
         } else {
             0
@@ -1468,7 +1465,7 @@ pub fn do_migrate(
             // would otherwise fail to deserialize and every `get_subscription`
             // call would panic after the binary upgrade.
             (3, _) => {
-                summary.subscriptions_for_ledger_expiration =
+                summary.subs_for_ledger_expiry =
                     rewrite_subscriptions_for_ledger_expiration(env);
                 current = 4;
             }
@@ -1476,7 +1473,7 @@ pub fn do_migrate(
             // `sub_account_label: Option<Symbol>` field deserializes cleanly
             // for subscriptions created before STORAGE_VERSION 5.
             (4, _) => {
-                summary.subscriptions_for_sub_account_label =
+                summary.subs_for_sub_account_label =
                     rewrite_subscriptions_for_sub_account_label(env);
                 current = 5;
             }

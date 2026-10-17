@@ -195,7 +195,7 @@ fn view_get_subscriptions_by_merchant_while_stopped() {
     client.enable_emergency_stop(&admin);
 
     let page = client
-        .get_subscriptions_by_merchant(&merchant, &0u32, &10u32)
+        .get_subscriptions_by_merchant(&merchant, &0u32, &10u32, &false)
         .expect("get_subscriptions_by_merchant failed");
     assert_eq!(page.len(), 1u32);
     assert_eq!(page.get(0).unwrap().amount, AMOUNT);
@@ -325,7 +325,7 @@ fn view_get_subscriptions_by_merchant_empty_state() {
     let (env, client, _token, _admin) = setup_empty();
     let merchant = Address::generate(&env);
     let page = client
-        .get_subscriptions_by_merchant(&merchant, &0u32, &10u32)
+        .get_subscriptions_by_merchant(&merchant, &0u32, &10u32, &false)
         .expect("should return Ok with empty list");
     assert_eq!(page.len(), 0u32);
 }

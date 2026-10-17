@@ -4,7 +4,7 @@
 //! or contract entrypoints.
 
 use soroban_sdk::{
-    contracterror, contracttype, symbol_short, Address, Bytes, BytesN, Env, String, Symbol, Vec,
+    contracterror, contracttype, symbol_short, Address, Bytes, BytesN, Env, Map, String, Symbol, Vec,
 };
 
 /// Current schema version for contract events.
@@ -857,6 +857,161 @@ pub const DISPUTE_WINDOW_SECS: u64 = 14 * 24 * 60 * 60; // 14 days
 /// against the escrow are governed by [`DISPUTE_WINDOW_SECS`].
 pub const CANCELLATION_ESCROW_WINDOW_SECS: u64 = 24 * 60 * 60; // 24 hours
 
+/// Escrow record created when a subscription is cancelled.
+///
+/// The remaining prepaid balance is held in escrow for
+/// [`CANCELLATION_ESCROW_WINDOW_SECS`] before the subscriber can claim it.
+/// The merchant can lodge a dispute during this window to convert the escrow
+/// into a live Dispute record.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CancellationEscrow {
+    pub subscription_id: u32,
+    pub amount: i128,
+    pub token: Address,
+    pub subscriber: Address,
+    pub merchant: Address,
+    pub released_at: u64,
+}
+
+/// Event emitted when a cancellation refund is placed into escrow.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CancellationEscrowOpenedEvent {
+    pub subscription_id: u32,
+    pub subscriber: Address,
+    pub merchant: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub released_at: u64,
+    pub timestamp: u64,
+    pub schema_version: u32,
+}
+
+/// Event emitted when a cancellation escrow is released to the subscriber.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CancellationEscrowReleasedEvent {
+    pub subscription_id: u32,
+    pub subscriber: Address,
+    pub amount: i128,
+    pub timestamp: u64,
+    pub schema_version: u32,
+}
+
+/// Event emitted when a merchant lodges a dispute against a cancellation escrow,
+/// converting it into a live Dispute record.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct CancellationEscrowDisputedEvent {
+    pub subscription_id: u32,
+    pub merchant: Address,
+    pub dispute_id: u64,
+    pub amount: i128,
+    pub timestamp: u64,
+    pub schema_version: u32,
+}
+
+/// Ring-buffer metadata for a per-token oracle price history window.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OraclePriceHistoryMeta {
+    /// Current write index in the ring buffer (`0..ORACLE_PRICE_HISTORY_SIZE`).
+    pub head: u32,
+    /// Total samples written (capped at `ORACLE_PRICE_HISTORY_SIZE` for read semantics).
+    pub count: u32,
+}
+
+/// Token registry entry.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedToken {
+    pub token: Address,
+    pub decimals: u32,
+}
+
+/// Event emitted when the fee-token override address is set or cleared.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FeeTokenConfiguredEvent {
+    pub admin: Address,
+    pub fee_token: Option<Address>,
+    pub timestamp: u64,
+    pub schema_version: u32,
+}
+
+/// Common scale used to compare amounts across tokens with differing decimal
+/// precision in cross-token reconciliation reports (see
+/// `queries::get_token_reconciliation`).
+pub const RECONCILIATION_DECIMALS: u32 = 9;
+
+/// Convert a raw token-base-unit amount to the common `RECONCILIATION_DECIMALS`
+/// scale, using the token's registered decimals (`DataKey::TokenDecimals`).
+///
+/// # Errors
+/// - `Error::InvalidToken` if the token has no registered decimals.
+/// - `Error::InvalidTokenDecimals` if the registered decimals is `0`.
+/// - `Error::Overflow` if scaling up would exceed `i128::MAX`.
+/// - `Error::InvalidInput` if the token has more than `RECONCILIATION_DECIMALS`
+///   decimals and `raw` carries precision that cannot be represented exactly
+///   at the common scale (i.e. scaling down would truncate a non-zero remainder).
+pub fn normalize_amount(env: &Env, token: &Address, raw: i128) -> Result<i128, Error> {
+    let decimals: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::TokenDecimals(token.clone()))
+        .ok_or(Error::InvalidToken)?;
+    if decimals == 0 {
+        return Err(Error::InvalidTokenDecimals);
+    }
+    if decimals <= RECONCILIATION_DECIMALS {
+        let scale = 10i128
+            .checked_pow(RECONCILIATION_DECIMALS - decimals)
+            .ok_or(Error::Overflow)?;
+        raw.checked_mul(scale).ok_or(Error::Overflow)
+    } else {
+        let scale = 10i128
+            .checked_pow(decimals - RECONCILIATION_DECIMALS)
+            .ok_or(Error::Overflow)?;
+        if raw % scale != 0 {
+            return Err(Error::InvalidInput);
+        }
+        Ok(raw / scale)
+    }
+}
+
+/// Inverse of [`normalize_amount`]: convert a `RECONCILIATION_DECIMALS`-scaled
+/// amount back to the token's own base-unit precision.
+///
+/// # Errors
+/// Same error conditions as [`normalize_amount`], mirrored for the reverse
+/// direction (e.g. `Error::InvalidInput` if the token has fewer decimals than
+/// the common scale and `normalized` cannot be represented exactly).
+pub fn denormalize_amount(env: &Env, token: &Address, normalized: i128) -> Result<i128, Error> {
+    let decimals: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::TokenDecimals(token.clone()))
+        .ok_or(Error::InvalidToken)?;
+    if decimals == 0 {
+        return Err(Error::InvalidTokenDecimals);
+    }
+    if decimals <= RECONCILIATION_DECIMALS {
+        let scale = 10i128
+            .checked_pow(RECONCILIATION_DECIMALS - decimals)
+            .ok_or(Error::Overflow)?;
+        if normalized % scale != 0 {
+            return Err(Error::InvalidInput);
+        }
+        Ok(normalized / scale)
+    } else {
+        let scale = 10i128
+            .checked_pow(decimals - RECONCILIATION_DECIMALS)
+            .ok_or(Error::Overflow)?;
+        normalized.checked_mul(scale).ok_or(Error::Overflow)
+    }
+}
+
 /// Lifecycle status of a dispute.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1452,8 +1607,8 @@ pub struct SchemaMigrationSummary {
     pub from_version: u32,
     pub to_version: u32,
     pub config_keys_to_migrate: u32,
-    pub subscriptions_for_ledger_expiration: u32,
-    pub subscriptions_for_sub_account_label: u32,
+    pub subs_for_ledger_expiry: u32,
+    pub subs_for_sub_account_label: u32,
     pub dry_run: bool,
     pub would_change: bool,
 }
@@ -3149,6 +3304,7 @@ mod event_topic_tests {
         TOPIC_CAP_REACH, TOPIC_CHARGED, TOPIC_CREATED, TOPIC_DEPOSITED, TOPIC_ONE_OFF_CHARGED,
         TOPIC_RECOVERY, TOPIC_WITHDRAWN,
     };
+    use soroban_sdk::testutils::Events;
     use soroban_sdk::{xdr::ToXdr, Env, FromVal, Symbol};
 
     /// The emitted wire representation is part of the indexer-facing contract.
@@ -3180,7 +3336,7 @@ mod event_topic_tests {
 
             assert_eq!(
                 emitted_topic.to_xdr(&env),
-                legacy_topic.to_xdr(&env),
+                legacy_topic.clone().to_xdr(&env),
                 "event topic {name} changed its wire representation"
             );
             assert_eq!(
@@ -3199,7 +3355,7 @@ mod event_topic_tests {
         let long_topic = Symbol::new(&env, "subscription_created");
 
         assert_eq!(
-            long_topic.to_xdr(&env),
+            long_topic.clone().to_xdr(&env),
             Symbol::new(&env, "subscription_created").to_xdr(&env)
         );
         assert_ne!(long_topic.to_xdr(&env), TOPIC_CREATED.to_xdr(&env));

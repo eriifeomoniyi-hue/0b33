@@ -76,12 +76,18 @@
 //!   Results are ascending by id. Continue with `next_cursor` when present; when it is `None`
 //!   the scan reached the end of the ID space and enumeration is complete, so an empty page
 //!   with `None` means nothing is stranded. Each call inspects at most `MAX_SCAN_DEPTH` ids.
-//! - **`get_subscriptions_by_merchant`** / **`get_subscriptions_by_token`**: Results follow the
-//!   order of ids in the on-chain index (`MerchantSubs` / `token_subs`), which is insertion
-//!   order (ascending id order for subscriptions created through this contract). `start` is a
-//!   0-based offset into that id list. Missing subscription records are skipped; callers should
-//!   use [`get_merchant_subscription_count`] or [`get_token_subscription_count`] for the index
-//!   length, not `result.len()`, when paginating.
+//! - **`get_subscriptions_by_merchant`**: Results follow the order of ids in the on-chain index
+//!   (`MerchantSubs`), which is insertion order (ascending id order for subscriptions created
+//!   through this contract). `start` is a 0-based offset into that id list. Passing
+//!   `reverse = true` walks the same index from its end, returning newest-first
+//!   (reverse-chronological) results without inverting the index. Missing subscription records
+//!   are skipped; callers should use [`get_merchant_subscription_count`] for the index length,
+//!   not `result.len()`, when paginating.
+//! - **`get_subscriptions_by_merchant_paginated`**: Cursor-based variant of the above. The
+//!   cursor is an offset into whichever ordering `reverse` selects, so cursors are
+//!   direction-specific and must be replayed with the same `reverse` value.
+//! - **`get_subscriptions_by_token`**: Results follow the order of ids in the on-chain index
+//!   (`token_subs`), which is insertion order. `start` is a 0-based offset into that id list.
 //!
 //! ## Read complexity per endpoint
 //!
@@ -201,14 +207,59 @@ pub fn estimate_topup_for_intervals(
     Ok(topup)
 }
 
+/// Reads up to `limit` subscription records starting at logical offset `start`
+/// into a merchant's id index.
+///
+/// When `reverse` is `true`, the index is traversed from its end so the newest
+/// subscriptions (highest ids) come first. The index is never copied or
+/// reordered: each logical position is mapped to a physical index with
+/// `len - 1 - position`, so the storage cost stays `1 + limit` reads regardless
+/// of the ordering chosen.
+fn read_merchant_page(
+    env: &Env,
+    ids: &Vec<u32>,
+    start: u32,
+    limit: u32,
+    reverse: bool,
+) -> Vec<Subscription> {
+    let len = ids.len();
+    let end = start.saturating_add(limit).min(len);
+    let mut out = Vec::new(env);
+    let mut position = start;
+    while position < end {
+        let index = if reverse {
+            len - 1 - position
+        } else {
+            position
+        };
+        if let Some(sub_id) = ids.get(index) {
+            if let Some(sub) = env
+                .storage()
+                .persistent()
+                .get::<_, Subscription>(&DataKey::Sub(sub_id))
+            {
+                out.push_back(sub);
+            }
+        }
+        position += 1;
+    }
+    out
+}
+
 /// Returns subscriptions for a merchant, paginated by offset into the merchant id index.
 ///
-/// `limit` must be in `1..=MAX_SUBSCRIPTION_LIST_PAGE`. Ordering is stable index order (insertion order).
+/// `limit` must be in `1..=MAX_SUBSCRIPTION_LIST_PAGE`.
+///
+/// `reverse = false` returns results in stable index order (insertion order,
+/// oldest first). `reverse = true` returns them in reverse-chronological order
+/// (newest first) without materialising or inverting the whole index. `start`
+/// always counts from the beginning of the selected ordering.
 pub fn get_subscriptions_by_merchant(
     env: &Env,
     merchant: Address,
     start: u32,
     limit: u32,
+    reverse: bool,
 ) -> Result<Vec<Subscription>, Error> {
     if limit == 0 || limit > MAX_SUBSCRIPTION_LIST_PAGE {
         return Err(Error::InvalidInput);
@@ -216,28 +267,11 @@ pub fn get_subscriptions_by_merchant(
     let key = DataKey::MerchantSubs(merchant);
     let ids: Vec<u32> = env.storage().instance().get(&key).unwrap_or(Vec::new(env));
 
-    let len = ids.len();
-    if start >= len {
+    if start >= ids.len() {
         return Ok(Vec::new(env));
     }
 
-    let end = if start + limit > len {
-        len
-    } else {
-        start + limit
-    };
-
-    let mut result = Vec::new(env);
-    for sub_id in ids.iter().skip(start as usize).take((end - start) as usize) {
-        if let Some(sub) = env
-            .storage()
-            .persistent()
-            .get::<_, Subscription>(&DataKey::Sub(sub_id))
-        {
-            result.push_back(sub);
-        }
-    }
-    Ok(result)
+    Ok(read_merchant_page(env, &ids, start, limit, reverse))
 }
 
 /// Returns the number of subscriptions for a given merchant.
@@ -251,9 +285,12 @@ pub fn get_merchant_subscription_count(env: &Env, merchant: Address) -> u32 {
 ///
 /// # Arguments
 /// - `merchant`: The merchant address whose subscriptions to fetch
-/// - `cursor`: Optional starting position (0-based index into the merchant's subscription list).
-///   Pass `None` to start from the beginning.
+/// - `cursor`: Optional starting position (0-based offset into the merchant's
+///   subscription list *as ordered by `reverse`*). Pass `None` to start from the
+///   beginning.
 /// - `limit`: Number of subscriptions to return (must be in `1..=MAX_SUBSCRIPTION_LIST_PAGE`)
+/// - `reverse`: `false` for oldest-first (insertion order), `true` for
+///   newest-first (reverse-chronological)
 ///
 /// # Returns
 /// A `SubscriptionsMerchantPage` containing:
@@ -265,13 +302,22 @@ pub fn get_merchant_subscription_count(env: &Env, merchant: Address) -> u32 {
 /// - `InvalidInput` if limit is 0 or exceeds `MAX_SUBSCRIPTION_LIST_PAGE`
 ///
 /// # Ordering
-/// Results follow insertion order (ascending subscription ID order) from the merchant's index.
-/// Missing subscription records are skipped; use `total` to determine the actual count.
+/// With `reverse = false`, results follow insertion order (ascending
+/// subscription ID order). With `reverse = true`, the index is walked from its
+/// end so the newest subscriptions come first; the index itself is never
+/// inverted. Missing subscription records are skipped; use `total` to determine
+/// the actual count.
+///
+/// Cursors are **direction-specific**: `next_cursor` is an offset into the
+/// ordering that produced it, so replay it with the same `reverse` value.
+/// Mixing orderings with a cursor from the other direction yields an undefined
+/// page.
 pub fn get_subscriptions_by_merchant_paginated(
     env: &Env,
     merchant: Address,
     cursor: Option<u32>,
     limit: u32,
+    reverse: bool,
 ) -> Result<SubscriptionsMerchantPage, Error> {
     if limit == 0 || limit > MAX_SUBSCRIPTION_LIST_PAGE {
         return Err(Error::InvalidInput);
@@ -290,22 +336,8 @@ pub fn get_subscriptions_by_merchant_paginated(
         });
     }
 
-    let end = if start + limit > total {
-        total
-    } else {
-        start + limit
-    };
-
-    let mut subscriptions = Vec::new(env);
-    for sub_id in ids.iter().skip(start as usize).take((end - start) as usize) {
-        if let Some(sub) = env
-            .storage()
-            .persistent()
-            .get::<_, Subscription>(&DataKey::Sub(sub_id))
-        {
-            subscriptions.push_back(sub);
-        }
-    }
+    let end = start.saturating_add(limit).min(total);
+    let subscriptions = read_merchant_page(env, &ids, start, limit, reverse);
 
     let next_cursor = if end < total { Some(end) } else { None };
 
@@ -417,7 +449,10 @@ pub fn get_cap_info(env: &Env, subscription_id: u32) -> Result<CapInfo, Error> {
     let (remaining_cap, cap_reached) = match sub.lifetime_cap {
         Some(cap) => {
             let remaining = crate::subscription::lifetime_cap_remaining(cap, sub.lifetime_charged);
-            (Some(remaining), crate::subscription::lifetime_cap_reached(cap, sub.lifetime_charged))
+            (
+                Some(remaining),
+                crate::subscription::lifetime_cap_reached(cap, sub.lifetime_charged),
+            )
         }
         None => (None, false),
     };

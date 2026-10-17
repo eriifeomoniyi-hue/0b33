@@ -324,10 +324,8 @@ pub fn do_execute_proposal(env: &Env, proposal_id: u64) -> Result<(), Error> {
         //
         // FUTURE: If adding ProposalKind::UpdateConfig or similar that writes to
         // DataKey::Token, DataKey::MinTopup, or DataKey::GracePeriod, add it here:
-        let writes_to_init_keys = matches!(proposal.kind,
-            // ProposalKind::UpdateConfig => true,  // FUTURE: Add if needed
-            false  // Currently no proposal kind writes to init keys
-        );
+        // Currently no proposal kind writes to initialization-critical keys.
+        let writes_to_init_keys = false;
         
         if writes_to_init_keys {
             return Err(Error::AlreadyInitialized);

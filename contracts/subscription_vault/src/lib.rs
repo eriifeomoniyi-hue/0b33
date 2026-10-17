@@ -57,6 +57,8 @@ mod test_merchant_tags;
 mod test_billing_period_snapshots;
 #[cfg(test)]
 mod test_governance;
+#[cfg(test)]
+mod test_merchant_query_ordering;
 mod types;
 mod validation;
 
@@ -709,8 +711,7 @@ pub use types::{
     TagAllowlistUpdatedEvent, TransferIntent, TransferIntentCreatedEvent, TransferVetoedEvent,
     TokenEarnings, TokenLiabilities, TokenReconciliationSnapshot, UsageChargeResult, UsageLimits,
     UsageState, UsageStatementEvent, CANCELLATION_ESCROW_WINDOW_SECS, DEFAULT_ALLOWED_OPS,
-    DISPUTE_WINDOW_SECS,
-    EVENT_SCHEMA_VERSION, MAX_MERCHANT_TAGS, MAX_METADATA_KEYS, MAX_METADATA_KEY_LENGTH,
+    DISPUTE_WINDOW_SECS, MAX_MERCHANT_TAGS, MAX_METADATA_KEYS, MAX_METADATA_KEY_LENGTH,
     MAX_METADATA_VALUE_LENGTH, OP_AUTO_RENEWAL, OP_BILLING_PAUSE, OP_CHARGE, OP_REFUND,
     OP_WITHDRAW, SNAPSHOT_FLAG_CLOSED, SNAPSHOT_FLAG_EMPTY, SNAPSHOT_FLAG_INTERVAL_CHARGED,
     SNAPSHOT_FLAG_USAGE_CHARGED, SUB_TTL_EXTEND_TO, SUB_TTL_THRESHOLD,
@@ -1503,6 +1504,7 @@ impl SubscriptionVault {
                     expires_at_ledger: s.expires_at_ledger,
                     sub_account_label: None,
                     proration_enabled: false,
+                    auto_pause_threshold: 0,
                 };
                 env.storage()
                     .persistent()
@@ -1661,6 +1663,7 @@ impl SubscriptionVault {
                 interval_seconds,
                 lifetime_cap,
                 expires_at,
+                expires_at_ledger: None,
                 timestamp: env.ledger().timestamp(),
                 schema_version: crate::types::EVENT_SCHEMA_VERSION,
             },
@@ -1744,7 +1747,6 @@ impl SubscriptionVault {
         expires_at: Option<u64>,
         expires_at_ledger: Option<u32>,
         sub_account_label: Option<Symbol>,
-        proration_enabled: bool,
     ) -> Result<u32, Error> {
         require_not_emergency_stop(&env)?;
         let sub_id = subscription::do_create_subscription_with_token(
@@ -1759,7 +1761,7 @@ impl SubscriptionVault {
             expires_at,
             expires_at_ledger,
             sub_account_label,
-            proration_enabled,
+            false,
         )?;
         env.events().publish(
             (types::TOPIC_CREATED, sub_id),
@@ -1789,26 +1791,16 @@ impl SubscriptionVault {
     ) -> Result<(), Error> {
         require_not_emergency_stop(&env)?;
         let _guard = crate::reentrancy::ReentrancyGuard::lock(&env, "deposit_funds")?;
-        subscription::do_deposit_funds(
-            &env,
-            subscription_id,
-            subscriber.clone(),
-            amount,
-            nonce,
-        )?;
+        subscription::do_deposit_funds(&env, subscription_id, amount, nonce)?;
         let sub = queries::get_subscription(&env, subscription_id)?;
-        let subscriber = sub.subscriber.clone();
-        let token = sub.token.clone();
-        subscription::do_deposit_funds(&env, subscription_id, amount, idem_key)?;
-        let updated = queries::get_subscription(&env, subscription_id)?;
         env.events().publish(
             (types::TOPIC_DEPOSITED, subscription_id),
             FundsDepositedEvent {
                 subscription_id,
-                subscriber,
-                token,
+                subscriber: sub.subscriber.clone(),
+                token: sub.token.clone(),
                 amount,
-                new_balance: updated.prepaid_balance,
+                new_balance: sub.prepaid_balance,
                 timestamp: env.ledger().timestamp(),
                 schema_version: crate::types::EVENT_SCHEMA_VERSION,
             },
@@ -2089,7 +2081,7 @@ impl SubscriptionVault {
     /// `None`, with `previous_expires_at_ledger` set to the prior bound so
     /// indexers can reconstruct the lifecycle).
     #[allow(clippy::too_many_arguments)]
-    pub fn set_subscription_expiration_ledger(
+    pub fn set_subscription_expiry_ledger(
         env: Env,
         subscription_id: u32,
         authorizer: Address,
@@ -3141,23 +3133,38 @@ impl SubscriptionVault {
     }
 
     /// List merchant subscriptions.
+    ///
+    /// `start` is a 0-based offset into the merchant's subscription index and
+    /// `limit` must be in `1..=MAX_SUBSCRIPTION_LIST_PAGE`. Pass
+    /// `reverse = false` for insertion (oldest-first) order, or
+    /// `reverse = true` for reverse-chronological (newest-first) order. The
+    /// reverse ordering is computed by walking the index from its end, so it
+    /// costs the same as the forward query.
     pub fn get_subscriptions_by_merchant(
         env: Env,
         merchant: Address,
         start: u32,
         limit: u32,
+        reverse: bool,
     ) -> Result<Vec<Subscription>, Error> {
-        queries::get_subscriptions_by_merchant(&env, merchant, start, limit)
+        queries::get_subscriptions_by_merchant(&env, merchant, start, limit, reverse)
     }
 
     /// List merchant subscriptions with cursor-based pagination.
-    pub fn get_subscriptions_by_merchant_paginated(
+    ///
+    /// `cursor` is the offset returned as `next_cursor` by the previous page
+    /// (`None` requests the first page). Pass `reverse = true` to page through
+    /// the merchant's subscriptions in reverse-chronological (newest-first)
+    /// order. Cursors are direction-specific, so replay one with the same
+    /// `reverse` value that produced it.
+    pub fn list_subscriptions_by_merchant(
         env: Env,
         merchant: Address,
         cursor: Option<u32>,
         limit: u32,
+        reverse: bool,
     ) -> Result<types::SubscriptionsMerchantPage, Error> {
-        queries::get_subscriptions_by_merchant_paginated(&env, merchant, cursor, limit)
+        queries::get_subscriptions_by_merchant_paginated(&env, merchant, cursor, limit, reverse)
     }
 
     /// List token subscriptions.

@@ -22,17 +22,15 @@ fn admin_rotation_invalidates_old_governance_proposals() {
 	client.add_guardian(&admin, &admin, &1u32);
 
 	let old_eta = 1_000_000 + 3 * 24 * 60 * 60;
-	let stale_id = client
-		.submit_proposal(
-			&ProposalKind::EmergencyStop,
-			&admin,
-			&None::<Address>,
-			&1u32,
-			&5_000u32,
-			&old_eta,
-		)
-		.unwrap();
-	client.vote_proposal(&stale_id, &true, &0);
+	let stale_id = client.submit_proposal(
+		&ProposalKind::EmergencyStop,
+		&admin,
+		&None::<Address>,
+		&1u32,
+		&5_000u32,
+		&old_eta,
+	);
+	client.vote_proposal(&stale_id, &true, &0u64);
 
 	let new_admin = Address::generate(&env);
 	client.propose_admin(&admin, &new_admin);
@@ -41,27 +39,25 @@ fn admin_rotation_invalidates_old_governance_proposals() {
 	client.add_guardian(&new_admin, &new_admin, &1u32);
 
 	assert_eq!(
-		client.try_vote_proposal(&stale_id, &true, &0),
-		Ok(Err(Error::ProposalInvalidated))
+		client.try_vote_proposal(&stale_id, &true, &0u64),
+		Err(Ok(Error::ProposalInvalidated))
 	);
 
 	let fresh_eta = 1_000_000 + 3 * 24 * 60 * 60;
-	let fresh_id = client
-		.submit_proposal(
-			&ProposalKind::EmergencyStop,
-			&new_admin,
-			&None::<Address>,
-			&1u32,
-			&5_000u32,
-			&fresh_eta,
-		)
-		.unwrap();
-	client.vote_proposal(&fresh_id, &true, &0);
+	let fresh_id = client.submit_proposal(
+		&ProposalKind::EmergencyStop,
+		&new_admin,
+		&None::<Address>,
+		&1u32,
+		&5_000u32,
+		&fresh_eta,
+	);
+	client.vote_proposal(&fresh_id, &true, &0u64);
 
 	env.ledger().set_timestamp(old_eta);
 	assert_eq!(
 		client.try_execute_proposal(&stale_id),
-		Ok(Err(Error::ProposalInvalidated))
+		Err(Ok(Error::ProposalInvalidated))
 	);
 	assert_eq!(client.try_execute_proposal(&fresh_id), Ok(Ok(())));
 }
@@ -81,24 +77,22 @@ fn direct_admin_rotation_invalidates_outstanding_proposals() {
 	client.add_guardian(&admin, &admin, &1u32);
 
 	let eta = 1_000_000 + 3 * 24 * 60 * 60;
-	let proposal_id = client
-		.submit_proposal(
-			&ProposalKind::EmergencyStop,
-			&admin,
-			&None::<Address>,
-			&1u32,
-			&5_000u32,
-			&eta,
-		)
-		.unwrap();
+	let proposal_id = client.submit_proposal(
+		&ProposalKind::EmergencyStop,
+		&admin,
+		&None::<Address>,
+		&1u32,
+		&5_000u32,
+		&eta,
+	);
 
 	let new_admin = Address::generate(&env);
-	let nonce = client.get_admin_nonce(&admin, 1);
+	let nonce = client.get_admin_nonce(&admin, &1u32);
 	client.rotate_admin(&admin, &new_admin, &nonce);
 	client.add_guardian(&new_admin, &new_admin, &1u32);
 
 	assert_eq!(
-		client.try_vote_proposal(&proposal_id, &true, &0),
-		Ok(Err(Error::ProposalInvalidated))
+		client.try_vote_proposal(&proposal_id, &true, &0u64),
+		Err(Ok(Error::ProposalInvalidated))
 	);
 }
